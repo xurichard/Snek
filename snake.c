@@ -1,40 +1,15 @@
-#include <stdio.h>
+#include <ncurses.h>
+#include <unistd.h>
 #include <stdlib.h>
-#include <stdbool.h>
-
-struct Board{
-    int height;
-    int width;
-    char board[10][10];
-};
+#include <sys/time.h>
+//gcc curses.c -lncurses -o curses
+#define FINAL_DELAY 70000
 
 typedef struct node {
     int x;
     int y;
     struct node * next;
 } node_t;
-
-void printBoard(struct Board b){
-    for(int i = 0; i < b.width; i++){
-        for(int j = 0; j < b.height; j++){
-            printf("| %c ", b.board[j][i]);
-        }
-        printf("|\n");
-    }
-}
-
-enum directions{North, South, East, West};
-struct Snake{
-    enum directions direction;
-    int length;
-    node_t * head;
-};
-
-// |   |   |   |   |   | * |
-// |   | o | o | o | O |   |
-//                  head
-//
-//
 
 // push to beginning of list
 void push(node_t ** head, int x, int y) {
@@ -53,14 +28,11 @@ void push_end(node_t * head, int x, int y) {
     while (current->next != NULL) {
         current = current->next;
     }
-
-    /* now we can add a new variable */
     current->next = malloc(sizeof(node_t));
     current->next->x = x;
     current->next->y = y;
     current->next->next = NULL;
 }
-
 
 //remove first item
 void pop(node_t ** head) {
@@ -69,7 +41,6 @@ void pop(node_t ** head) {
     if (*head == NULL) {
         return;
     } 
-
     next_node = (*head)->next;
     free(*head);
     *head = next_node;
@@ -77,94 +48,177 @@ void pop(node_t ** head) {
 
 // remove last item
 void remove_last(node_t * head) {
-    /* if there is only one item in the list, remove it */
     if (head->next == NULL) {
         free(head);
     }
-
-    /* get to the second to last node in the list */
     node_t * current = head;
     while (current->next->next != NULL) {
         current = current->next;
     }
-
-    /* now current points to the second to last item of the list, so let's remove current->next */
     free(current->next);
     current->next = NULL;
 }
 
+enum direction{NORTH, SOUTH, EAST, WEST};
+
+struct Snake{
+    enum direction direction;
+    int length;
+    node_t * head;
+};
+
+void kbhit(int wait_us)
+{
+    struct timespec start, end;
+    int ch;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+    uint64_t delta_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+    while(delta_us < wait_us){
+        ch = getch();
+        if (ch != ERR) {
+            usleep(wait_us*1.1 - delta_us);
+        }
+        clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+        delta_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_nsec - start.tv_nsec) / 1000;
+    }
+    ungetch(ch);
+    // return ch;
+}
 
 int main()
-{
-    struct Board myBoard;
-    myBoard.height = 10;
-    myBoard.width = 10;
-    // myBoard already allocated
-    for(int i = 0; i < myBoard.height; i++){
-        for(int j = 0; j < myBoard.width; j++){
-            myBoard.board[i][j] = ' ';
-        }
-    }
+{   
+    initscr();          /* Start curses mode          */
+    noecho(); // Don't echo any keypresses
+    keypad(stdscr, TRUE);
+    curs_set(FALSE); // Don't display a cursor
+    nodelay(stdscr, true);
+    cbreak();
+
+    int x = 0, y = 0;
+    int max_y = 0, max_x = 0;
+    int direction_x = 1;
+    int direction_y = 0;
+    getmaxyx(stdscr, max_y, max_x);
 
     struct Snake mySnake;
-    mySnake.length = 1;
-    mySnake.direction = North;
+    mySnake.direction = EAST;
     mySnake.head = malloc(sizeof(node_t));
-    mySnake.head->y = myBoard.height/2;
-    mySnake.head->x = myBoard.width/2;
+    mySnake.head->y = max_y/2;
+    mySnake.head->x = max_x/2;
     mySnake.head->next = NULL;
 
     bool playing = true;
-    char input;
-    while(playing){
-        //add snake to board then clear board
+    int DELAY = 150000;
+
+    int score = 0;
+
+    srand(time(NULL));
+    int food_x = rand()%max_x;
+    int food_y = rand()%max_y;
+
+    do{
+        usleep(DELAY);
+
+        // kbhit(10000); get input
+        switch(getch()){
+            case 'w':
+                if(mySnake.direction != SOUTH){
+                    mySnake.direction = NORTH;
+                    direction_x = 0;
+                    direction_y = -1;
+                }
+                break;
+            case 's':
+                if(mySnake.direction != NORTH){
+                    mySnake.direction = SOUTH;
+                    direction_x = 0;
+                    direction_y = 1;
+                }
+                break;
+            case 'a':
+                if(mySnake.direction != EAST){
+                    mySnake.direction = WEST;
+                    direction_x = -1;
+                    direction_y = 0;
+                }
+                break;
+            case 'd':
+                if(mySnake.direction != WEST){
+                    mySnake.direction = EAST;
+                    direction_x = 1;
+                    direction_y = 0;
+                }
+                break;
+            default:
+                break;
+        }
+
+        int next_x = mySnake.head->x + direction_x;
+        int next_y = mySnake.head->y + direction_y;
+
+        //detect self collision in here, shoudl be at the end, but here for efficiency
         node_t * current = mySnake.head;
         while (current != NULL) {
-            //printf("%d\n", current->x);
-            myBoard.board[current->x][current->y] = 'o';
+            if(current->y == next_y && current->x == next_x){
+                playing = false;
+                break;
+            }
             current = current->next;
         }
-        printBoard(myBoard);
-        for(int i = 0; i < myBoard.height; i++){
-            for(int j = 0; j < myBoard.width; j++){
-                myBoard.board[i][j] = ' ';
-            }
-        }
 
-        int nextx = mySnake.head->x;
-        int nexty = mySnake.head->y;
-        //update snake - push new node onto head, pop off tail
-        if(mySnake.direction == South){
-            nexty = mySnake.head->y + 1;
-        } else if(mySnake.direction == North){
-            nexty = mySnake.head->y - 1;
-        } else if(mySnake.direction == East){
-            nextx = mySnake.head->x + 1;
-        } else{
-            nextx = mySnake.head->x - 1;
-        }
-
-        if(nextx >= myBoard.width || nextx < 0 || nexty >= myBoard.height || nexty < 0){
+        if(next_y < 0 || next_y >= max_y || next_x < 0 || next_x >= max_x){
+            //collision with wall
             playing = false;
-        } else{
-            push(&mySnake.head, nextx, nexty);
+        }
+
+        push(&mySnake.head, next_x, next_y);
+        if(next_x == food_x && next_y == food_y){
+            //increase score, new food
+            score += 100;
+            food_x = rand()%max_x;
+            food_y = rand()%max_y;
+            DELAY = FINAL_DELAY + (DELAY - FINAL_DELAY)*.9;
+        }else{
             remove_last(mySnake.head);
         }
 
-        scanf(" %c", &input);
-        if(input == 'w'){
-            mySnake.direction = North;
-        } else if(input == 'a'){
-            mySnake.direction = West;
-        } else if(input == 's'){
-            mySnake.direction = South;
-        } else if(input == 'd'){
-            mySnake.direction = East;
+        clear();
+        //print snake
+        current = mySnake.head;
+        while (current != NULL) {
+            mvprintw(current->y, current->x, "o");
+            current = current->next;
         }
-    }
 
-    puts("I think you lost");
+        //print food
+        mvprintw(food_y, food_x, "x");
+
+        //print score
+        char snum[12];
+        sprintf(snum, "%d", score);
+        mvprintw(1, max_x-6, &snum[0]);
+
+        refresh();
+    }while(playing);
+    endwin();           /* End curses mode        */
+
+    int food_count = -1; //don't count the initial head
+    node_t * current = mySnake.head;
+    while (current != NULL) {
+        current = current->next;
+        food_count ++;
+    }
+    printf("Congraduations, you ate %d food and had a final score of %d\n", food_count, score);
+    return 0;
 }
+
+
+
+
+
+
+
 
 
 
